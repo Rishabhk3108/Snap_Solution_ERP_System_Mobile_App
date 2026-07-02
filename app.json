@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Snap ERP Attendance",
+    "slug": "snap-erp-attendance",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0B1120"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.snaperp.attendance",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is required to take your attendance selfie on check-in.",
+        "NSLocationWhenInUseUsageDescription": "Location is recorded alongside your check-in."
+      }
+    },
+    "android": {
+      "package": "com.snaperp.attendance",
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-camera",
+      "expo-location",
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "361366fd-bf1e-4ec6-a3b8-9917042794ba"
+      }
+    }
+  }
+}
