@@ -1,7 +1,8 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
+import { getPersonalInfo } from '../../api/onboarding';
 import { colors } from '../../theme';
 
 const STEPS = ['Personal Details', 'Face Enrolment', 'Face Test'];
@@ -9,6 +10,7 @@ const STEPS = ['Personal Details', 'Face Enrolment', 'Face Test'];
 export default function WelcomeScreen({ navigation }) {
   const { user } = useAuth();
   const firstName = user?.fullname?.split(' ')[0] || 'there';
+  const [checking, setChecking] = useState(false);
 
   return (
     <SafeAreaView style={styles.root}>
@@ -55,11 +57,29 @@ export default function WelcomeScreen({ navigation }) {
       {/* CTA */}
       <View style={styles.footer}>
         <TouchableOpacity
-          style={styles.primaryBtn}
-          onPress={() => navigation.navigate('OB_PersonalDetails')}
+          style={[styles.primaryBtn, checking && styles.disabled]}
+          onPress={async () => {
+            setChecking(true);
+            try {
+              const { data } = await getPersonalInfo(user.id);
+              // If admin already filled mobile, skip personal details step
+              if (data?.mobile) {
+                navigation.navigate('OB_FaceEnroll');
+              } else {
+                navigation.navigate('OB_PersonalDetails');
+              }
+            } catch {
+              navigation.navigate('OB_PersonalDetails');
+            } finally {
+              setChecking(false);
+            }
+          }}
+          disabled={checking}
           activeOpacity={0.85}
         >
-          <Text style={styles.primaryBtnText}>Get Started →</Text>
+          {checking
+            ? <ActivityIndicator color="#1f1f1f" />
+            : <Text style={styles.primaryBtnText}>Get Started →</Text>}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -129,4 +149,5 @@ const styles = StyleSheet.create({
     paddingVertical: 16, alignItems: 'center',
   },
   primaryBtnText: { fontSize: 16, fontWeight: '700', color: '#1f1f1f' },
+  disabled: { opacity: 0.6 },
 });

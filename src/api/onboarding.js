@@ -23,3 +23,6 @@ export const verifyFaceTest = (empid, photoUri) => {
 
 export const markOnboardingComplete = () =>
   client.post('/onboarding/complete');
+
+export const getPersonalInfo = (userId) =>
+  client.get(`/personalInformations/user/${userId}`);
