@@ -19,7 +19,7 @@ export default function FaceTestScreen({ navigation }) {
   const takePicture = async () => {
     if (!cameraRef.current) return;
     try {
-      const result = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      const result = await cameraRef.current.takePictureAsync({ quality: 1.0 });
       setPhoto(result.uri);
     } catch {
       Alert.alert('Error', 'Could not capture photo. Please try again.');
@@ -104,7 +104,7 @@ export default function FaceTestScreen({ navigation }) {
 
         <View style={styles.ovalWrap} pointerEvents="none">
           <View style={styles.ovalGuide} />
-          <Text style={styles.ovalHint}>Take a fresh selfie to test your face scan</Text>
+          <Text style={styles.ovalHint}>Move closer · Face the light · Stay still</Text>
         </View>
 
         <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
