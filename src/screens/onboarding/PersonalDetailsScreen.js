@@ -51,11 +51,21 @@ export default function PersonalDetailsScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
+  const [nomineeName, setNomineeName] = useState('');
+  const [nomineeRelationship, setNomineeRelationship] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const handleContinue = async () => {
     if (!mobile.trim()) {
       Alert.alert('Mobile Required', 'Please enter your mobile number.');
+      return;
+    }
+    if (!nomineeName.trim()) {
+      Alert.alert('Nominee Required', 'Please enter the nominee name.');
+      return;
+    }
+    if (!nomineeRelationship.trim()) {
+      Alert.alert('Nominee Required', 'Please enter your relationship with the nominee.');
       return;
     }
     setSubmitting(true);
@@ -67,6 +77,8 @@ export default function PersonalDetailsScreen({ navigation }) {
         emailAddress: email.trim() || undefined,
         city: city.trim() || undefined,
         state: state.trim() || undefined,
+        nomineeName: nomineeName.trim(),
+        nomineeRelationship: nomineeRelationship.trim(),
       });
       navigation.navigate('OB_FaceEnroll');
     } catch (err) {
@@ -153,6 +165,26 @@ export default function PersonalDetailsScreen({ navigation }) {
             placeholderTextColor={colors.textTertiary}
             value={state}
             onChangeText={setState}
+          />
+
+          {/* Nominee Name */}
+          <Text style={styles.label}>Nominee Name <Text style={styles.required}>*</Text></Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Full name of nominee"
+            placeholderTextColor={colors.textTertiary}
+            value={nomineeName}
+            onChangeText={setNomineeName}
+          />
+
+          {/* Nominee Relationship */}
+          <Text style={styles.label}>Relationship with Nominee <Text style={styles.required}>*</Text></Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Spouse, Father, Mother"
+            placeholderTextColor={colors.textTertiary}
+            value={nomineeRelationship}
+            onChangeText={setNomineeRelationship}
           />
 
           <TouchableOpacity
