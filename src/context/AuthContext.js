@@ -29,11 +29,16 @@ export function AuthProvider({ children }) {
   };
 
   const signIn = async (token, userData) => {
-    await AsyncStorage.multiSet([
+    const pairs = [
       ['@token', token],
       ['@user', JSON.stringify(userData)],
-    ]);
+    ];
+    if (userData.projectId) {
+      pairs.push(['@projectId', String(userData.projectId)]);
+    }
+    await AsyncStorage.multiSet(pairs);
     setUser(userData);
+    if (userData.projectId) setProjectIdState(userData.projectId);
   };
 
   const signOut = async () => {

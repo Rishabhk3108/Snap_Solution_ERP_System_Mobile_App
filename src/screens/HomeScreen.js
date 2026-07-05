@@ -7,7 +7,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getAttendanceStatus, checkOut } from '../api/attendance';
-import { getProjects } from '../api/projects';
 import { getTodayDate, getCurrentTime, getYearMonth, formatDisplayDate } from '../utils/dateTime';
 import { colors } from '../theme';
 
@@ -58,24 +57,19 @@ export default function HomeScreen({ navigation }) {
 
   const resolveProject = async () => {
     if (projectId) return;
-    try {
-      const { data } = await getProjects();
-      const list = Array.isArray(data) ? data : (data.projects || data.data || []);
-      if (list.length === 1) {
-        await saveProjectId(list[0].id);
-      } else if (list.length > 1) {
-        Alert.alert(
-          'Select Your Project',
-          'Which project are you checking in for?',
-          list.slice(0, 4).map((p) => ({
-            text: p.name || p.project_name || `Project ${p.id}`,
-            onPress: () => saveProjectId(p.id),
-          }))
-        );
-      }
-    } catch {
-      // falls back to asking at next check-in
+
+    // Use the projectId that came with the login response
+    if (user?.projectId) {
+      await saveProjectId(user.projectId);
+      return;
     }
+
+    // Fallback: ask admin to assign the employee to a project
+    Alert.alert(
+      'No Project Assigned',
+      'You have not been assigned to a project yet. Please contact your admin.',
+      [{ text: 'OK' }]
+    );
   };
 
   const onRefresh = async () => {
