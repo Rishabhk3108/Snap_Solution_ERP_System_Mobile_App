@@ -6,21 +6,88 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
-import { checkInWithFace } from '../api/attendance';
+import { checkInWithFace, getCheckinStatus } from '../api/attendance';
 import { useAuth } from '../context/AuthContext';
 import { getTodayDate, getCurrentTime, getYearMonth } from '../utils/dateTime';
+
+const POLL_INTERVAL_MS = 5000;   // check status every 5 seconds
+const MAX_POLL_ATTEMPTS = 72;    // 72 × 5s = 6 minutes before giving up
 
 export default function CameraScreen({ navigation }) {
   const { user, projectId } = useAuth();
   const [camPermission, requestCamPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [verifyMessage, setVerifyMessage] = useState('');
   const cameraRef = useRef(null);
+  const pollIntervalRef = useRef(null);
+  const pollAttemptsRef = useRef(0);
 
   // Request location permission in the background while camera opens
   useEffect(() => {
     Location.requestForegroundPermissionsAsync();
+    return () => stopPolling(); // clean up if user navigates away
   }, []);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const startPolling = (jobId) => {
+    pollAttemptsRef.current = 0;
+    setVerifyMessage('Verifying your identity...');
+
+    pollIntervalRef.current = setInterval(async () => {
+      pollAttemptsRef.current += 1;
+
+      // Update the elapsed-time message
+      const elapsed = pollAttemptsRef.current * (POLL_INTERVAL_MS / 1000);
+      if (elapsed >= 30 && elapsed < 60) {
+        setVerifyMessage('Still checking — almost there...');
+      } else if (elapsed >= 60) {
+        const m = Math.floor(elapsed / 60);
+        const s = elapsed % 60;
+        setVerifyMessage(`Verifying... ${m}m ${s}s elapsed`);
+      }
+
+      if (pollAttemptsRef.current >= MAX_POLL_ATTEMPTS) {
+        stopPolling();
+        setSubmitting(false);
+        setVerifyMessage('');
+        Alert.alert(
+          'Verification Timeout',
+          'Face verification is taking too long. Please try again.',
+        );
+        return;
+      }
+
+      try {
+        const { data } = await getCheckinStatus(jobId);
+        if (data.status === 'success') {
+          stopPolling();
+          navigation.replace('Home');
+        } else if (data.status === 'error') {
+          stopPolling();
+          setSubmitting(false);
+          setVerifyMessage('');
+          Alert.alert(
+            'Check In Failed',
+            data.message || 'Face verification failed. Please try again.',
+          );
+        }
+        // status === 'processing' → keep polling
+      } catch {
+        // 404 means server restarted and job was lost; network error also lands here
+        stopPolling();
+        setSubmitting(false);
+        setVerifyMessage('');
+        Alert.alert('Check In Failed', 'Server connection lost. Please try again.');
+      }
+    }, POLL_INTERVAL_MS);
+  };
 
   const takePicture = async () => {
     if (!cameraRef.current) return;
@@ -34,6 +101,7 @@ export default function CameraScreen({ navigation }) {
 
   const handleSubmit = async () => {
     setSubmitting(true);
+    setVerifyMessage('Submitting photo...');
     try {
       // Capture GPS location (non-blocking — falls back to 'Unknown')
       let locationStr = 'Unknown';
@@ -47,7 +115,7 @@ export default function CameraScreen({ navigation }) {
       }
 
       const { year, month } = getYearMonth();
-      const checkInPromise = checkInWithFace(
+      const response = await checkInWithFace(
         {
           empid: user.id,
           projectId,
@@ -60,27 +128,22 @@ export default function CameraScreen({ navigation }) {
         photo,
       );
 
-      // If face recognition on the server takes too long, navigate home anyway.
-      // The attendance record is saved before face verification runs, so it will
-      // already be recorded even if this timeout fires.
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject({ isTimeout: true }), 20000)
-      );
-
-      await Promise.race([checkInPromise, timeoutPromise]);
-      navigation.replace('Home');
-    } catch (err) {
-      if (err && err.isTimeout) {
-        // Server is still processing (face recognition) — attendance was already saved.
+      const jobId = response?.data?.jobId;
+      if (jobId) {
+        // Face verification running in background — poll until done
+        startPolling(jobId);
+      } else {
+        // No face image was used — direct check-in succeeded
         navigation.replace('Home');
-        return;
       }
+    } catch (err) {
+      setSubmitting(false);
+      setVerifyMessage('');
       const msg =
         err?.response?.data?.detail ||
         err?.response?.data?.message ||
-        'Check-in failed. Please try again.';
+        'Could not submit check-in. Please try again.';
       Alert.alert('Check In Failed', msg);
-      setSubmitting(false);
     }
   };
 
@@ -117,25 +180,38 @@ export default function CameraScreen({ navigation }) {
           <Text style={styles.previewSub}>
             Your location will be captured automatically on submit.
           </Text>
-          <TouchableOpacity
-            style={[styles.primaryBtn, submitting && styles.disabled]}
-            onPress={handleSubmit}
-            disabled={submitting}
-            activeOpacity={0.87}
-          >
-            {submitting ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.primaryBtnText}>Submit & Check In</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.ghostBtn}
-            onPress={() => setPhoto(null)}
-            disabled={submitting}
-          >
-            <Text style={styles.ghostBtnText}>Retake</Text>
-          </TouchableOpacity>
+          {submitting ? (
+            <View style={styles.verifyingBox}>
+              <ActivityIndicator color="#4F8EF7" size="large" />
+              <Text style={styles.verifyingText}>{verifyMessage}</Text>
+              <TouchableOpacity
+                style={styles.ghostBtn}
+                onPress={() => {
+                  stopPolling();
+                  setSubmitting(false);
+                  setVerifyMessage('');
+                }}
+              >
+                <Text style={styles.ghostBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={handleSubmit}
+                activeOpacity={0.87}
+              >
+                <Text style={styles.primaryBtnText}>Submit & Check In</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.ghostBtn}
+                onPress={() => setPhoto(null)}
+              >
+                <Text style={styles.ghostBtnText}>Retake</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </SafeAreaView>
       </View>
     );
@@ -230,4 +306,8 @@ const styles = StyleSheet.create({
   },
   previewTitle: { fontSize: 18, fontWeight: '700', color: '#EDF2F7' },
   previewSub: { fontSize: 13, color: '#4A6080', textAlign: 'center', marginBottom: 6 },
+
+  // Verifying state
+  verifyingBox: { alignItems: 'center', paddingVertical: 12, width: '100%', gap: 12 },
+  verifyingText: { fontSize: 14, color: '#4A6080', textAlign: 'center' },
 });

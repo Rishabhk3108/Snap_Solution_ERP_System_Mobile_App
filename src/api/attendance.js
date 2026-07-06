@@ -7,10 +7,10 @@ export const checkIn = (payload) =>
   client.post('/attendance/add', payload);
 
 /**
- * Check-in with face verification.
- * Sends a multipart/form-data request including the selfie photo.
- * If the employee has a registered face and the selfie doesn't match,
- * the server returns 401.  If no face is registered, the server allows check-in.
+ * Submit a check-in with a face selfie.
+ * The server starts face verification in the background and returns immediately
+ * with { jobId, status: "processing" }.
+ * Poll getCheckinStatus(jobId) every few seconds until status is "success" or "error".
  */
 export const checkInWithFace = (payload, photoUri) => {
   const form = new FormData();
@@ -30,8 +30,13 @@ export const checkInWithFace = (payload, photoUri) => {
   }
   return client.post('/attendance/checkin', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000,  // 30s for the upload itself; face recognition runs after
   });
 };
+
+/** Poll for face-verification result after checkInWithFace. */
+export const getCheckinStatus = (jobId) =>
+  client.get(`/attendance/checkin/status/${jobId}`, { timeout: 10000 });
 
 export const checkOut = (payload) =>
   client.put('/attendance/update', payload);
