@@ -47,7 +47,7 @@ export default function CameraScreen({ navigation }) {
       }
 
       const { year, month } = getYearMonth();
-      await checkInWithFace(
+      const checkInPromise = checkInWithFace(
         {
           empid: user.id,
           projectId,
@@ -60,11 +60,24 @@ export default function CameraScreen({ navigation }) {
         photo,
       );
 
+      // If face recognition on the server takes too long, navigate home anyway.
+      // The attendance record is saved before face verification runs, so it will
+      // already be recorded even if this timeout fires.
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject({ isTimeout: true }), 20000)
+      );
+
+      await Promise.race([checkInPromise, timeoutPromise]);
       navigation.replace('Home');
     } catch (err) {
+      if (err && err.isTimeout) {
+        // Server is still processing (face recognition) — attendance was already saved.
+        navigation.replace('Home');
+        return;
+      }
       const msg =
-        err.response?.data?.detail ||
-        err.response?.data?.message ||
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
         'Check-in failed. Please try again.';
       Alert.alert('Check In Failed', msg);
       setSubmitting(false);
