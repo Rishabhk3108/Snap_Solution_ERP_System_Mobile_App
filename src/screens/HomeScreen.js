@@ -5,10 +5,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import * as LocalAuthentication from 'expo-local-authentication';
-import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
-import { getAttendanceStatus, checkIn, checkOut } from '../api/attendance';
+import { getAttendanceStatus, checkOut } from '../api/attendance';
 import { getTodayDate, getCurrentTime, getYearMonth, formatDisplayDate } from '../utils/dateTime';
 import { colors } from '../theme';
 
@@ -27,7 +25,6 @@ export default function HomeScreen({ navigation }) {
   const [pageLoading, setPageLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [clock, setClock] = useState(getCurrentTime());
-  const [checkingIn, setCheckingIn] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
 
   useEffect(() => {
@@ -81,7 +78,7 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  const handleCheckIn = async () => {
+  const handleCheckIn = () => {
     if (!projectId) {
       Alert.alert(
         'No Project Assigned',
@@ -90,76 +87,11 @@ export default function HomeScreen({ navigation }) {
       );
       return;
     }
-
-    // Biometric identity verification (Face ID / fingerprint)
-    try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (hasHardware && isEnrolled) {
-        const auth = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Verify your identity to check in',
-          cancelLabel: 'Cancel',
-          disableDeviceFallback: false,
-        });
-        if (!auth.success) {
-          Alert.alert('Verification Failed', 'Identity not confirmed. Check-in cancelled.');
-          return;
-        }
-      }
-    } catch {
-      // Biometrics unavailable — proceed without it
-    }
-
-    // Get GPS location
-    setCheckingIn(true);
-    let locationStr = 'Unknown';
-    try {
-      await Location.requestForegroundPermissionsAsync();
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
-    } catch {}
-
-    // Mark attendance
-    try {
-      const { year, month } = getYearMonth();
-      await checkIn({
-        empid: user.id,
-        projectId,
-        date: getTodayDate(),
-        startTime: getCurrentTime(),
-        location: locationStr,
-        year,
-        month,
-      });
-      await fetchStatus();
-    } catch (err) {
-      Alert.alert(
-        'Check In Failed',
-        err?.response?.data?.detail || err?.response?.data?.message || 'Please try again.',
-      );
-    } finally {
-      setCheckingIn(false);
-    }
+    navigation.navigate('Camera', { mode: 'checkin' });
   };
 
   const handleCheckOut = () => {
-    Alert.alert('Confirm Check Out', 'Are you sure you want to check out now?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Check Out',
-        onPress: async () => {
-          setCheckingOut(true);
-          try {
-            await checkOut({ empid: user.id, date: getTodayDate(), endTime: getCurrentTime() });
-            await fetchStatus();
-          } catch (err) {
-            Alert.alert('Check Out Failed', err.response?.data?.detail || 'Something went wrong. Please try again.');
-          } finally {
-            setCheckingOut(false);
-          }
-        },
-      },
-    ]);
+    navigation.navigate('Camera', { mode: 'checkout' });
   };
 
   const cfg = STATUS[status] ?? STATUS.A;
@@ -205,33 +137,16 @@ export default function HomeScreen({ navigation }) {
         {/* Action */}
         <View style={styles.actionWrap}>
           {(status === 'A' || status === null) && (
-            <TouchableOpacity
-              style={[styles.checkInBtn, checkingIn && styles.disabled]}
-              onPress={handleCheckIn}
-              disabled={checkingIn}
-              activeOpacity={0.88}
-            >
-              {checkingIn ? (
-                <ActivityIndicator color={colors.accentText} size="large" />
-              ) : (
-                <>
-                  <Text style={styles.actionLabel}>Check In</Text>
-                  <Text style={styles.actionHint}>Uses Face ID / fingerprint to verify</Text>
-                </>
-              )}
+            <TouchableOpacity style={styles.checkInBtn} onPress={handleCheckIn} activeOpacity={0.88}>
+              <Text style={styles.actionLabel}>Check In</Text>
+              <Text style={styles.actionHint}>Take a selfie to verify & check in</Text>
             </TouchableOpacity>
           )}
 
           {status === 'NC' && (
-            <TouchableOpacity style={styles.checkOutBtn} onPress={handleCheckOut} disabled={checkingOut} activeOpacity={0.88}>
-              {checkingOut ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={[styles.actionLabel, { color: '#fff' }]}>Check Out</Text>
-                  <Text style={[styles.actionHint, { color: 'rgba(255,255,255,0.7)' }]}>Tap to end your working day</Text>
-                </>
-              )}
+            <TouchableOpacity style={styles.checkOutBtn} onPress={handleCheckOut} activeOpacity={0.88}>
+              <Text style={[styles.actionLabel, { color: '#fff' }]}>Check Out</Text>
+              <Text style={[styles.actionHint, { color: 'rgba(255,255,255,0.7)' }]}>Take a selfie to verify & check out</Text>
             </TouchableOpacity>
           )}
 

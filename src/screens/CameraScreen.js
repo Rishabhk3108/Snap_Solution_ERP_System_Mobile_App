@@ -5,94 +5,30 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
-import { checkInWithFace, getCheckinStatus } from '../api/attendance';
+import { compareFace } from '../api/face';
+import { checkIn, checkOut } from '../api/attendance';
 import { useAuth } from '../context/AuthContext';
 import { getTodayDate, getCurrentTime, getYearMonth } from '../utils/dateTime';
 
-const POLL_INTERVAL_MS = 5000;   // check status every 5 seconds
-const MAX_POLL_ATTEMPTS = 72;    // 72 × 5s = 6 minutes before giving up
-
-export default function CameraScreen({ navigation }) {
+export default function CameraScreen({ navigation, route }) {
+  const mode = route?.params?.mode ?? 'checkin'; // 'checkin' | 'checkout'
   const { user, projectId } = useAuth();
   const [camPermission, requestCamPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [verifyMessage, setVerifyMessage] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
   const cameraRef = useRef(null);
-  const pollIntervalRef = useRef(null);
-  const pollAttemptsRef = useRef(0);
 
-  // Request location permission in the background while camera opens
   useEffect(() => {
     Location.requestForegroundPermissionsAsync();
-    return () => stopPolling(); // clean up if user navigates away
   }, []);
-
-  const stopPolling = () => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-  };
-
-  const startPolling = (jobId) => {
-    pollAttemptsRef.current = 0;
-    setVerifyMessage('Verifying your identity...');
-
-    pollIntervalRef.current = setInterval(async () => {
-      pollAttemptsRef.current += 1;
-
-      // Update the elapsed-time message
-      const elapsed = pollAttemptsRef.current * (POLL_INTERVAL_MS / 1000);
-      if (elapsed >= 30 && elapsed < 60) {
-        setVerifyMessage('Still checking — almost there...');
-      } else if (elapsed >= 60) {
-        const m = Math.floor(elapsed / 60);
-        const s = elapsed % 60;
-        setVerifyMessage(`Verifying... ${m}m ${s}s elapsed`);
-      }
-
-      if (pollAttemptsRef.current >= MAX_POLL_ATTEMPTS) {
-        stopPolling();
-        setSubmitting(false);
-        setVerifyMessage('');
-        Alert.alert(
-          'Verification Timeout',
-          'Face verification is taking too long. Please try again.',
-        );
-        return;
-      }
-
-      try {
-        const { data } = await getCheckinStatus(jobId);
-        if (data.status === 'success') {
-          stopPolling();
-          navigation.replace('Home');
-        } else if (data.status === 'error') {
-          stopPolling();
-          setSubmitting(false);
-          setVerifyMessage('');
-          Alert.alert(
-            'Check In Failed',
-            data.message || 'Face verification failed. Please try again.',
-          );
-        }
-        // status === 'processing' → keep polling
-      } catch {
-        // 404 means server restarted and job was lost; network error also lands here
-        stopPolling();
-        setSubmitting(false);
-        setVerifyMessage('');
-        Alert.alert('Check In Failed', 'Server connection lost. Please try again.');
-      }
-    }, POLL_INTERVAL_MS);
-  };
 
   const takePicture = async () => {
     if (!cameraRef.current) return;
     try {
-      const result = await cameraRef.current.takePictureAsync({ quality: 0.75 });
+      const result = await cameraRef.current.takePictureAsync({ quality: 0.8 });
       setPhoto(result.uri);
     } catch {
       Alert.alert('Error', 'Could not capture photo. Please try again.');
@@ -101,22 +37,42 @@ export default function CameraScreen({ navigation }) {
 
   const handleSubmit = async () => {
     setSubmitting(true);
-    setVerifyMessage('Submitting photo...');
+    setStatusMessage('Verifying your identity...');
+
     try {
-      // Capture GPS location (non-blocking — falls back to 'Unknown')
-      let locationStr = 'Unknown';
-      try {
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-        locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
-      } catch {
-        // Location permission denied or unavailable — proceed anyway
+      // Resize selfie before upload to reduce transfer size
+      const compressed = await ImageManipulator.manipulateAsync(
+        photo,
+        [{ resize: { width: 640 } }],
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+      );
+
+      // Face comparison against registration photo (server uses OpenCV, ~200ms)
+      const { data: faceResult } = await compareFace(user.id, compressed.uri);
+
+      if (!faceResult.match) {
+        Alert.alert(
+          'Face Not Recognized',
+          faceResult.message || 'Your face did not match. Please try again in better lighting.',
+        );
+        setSubmitting(false);
+        setStatusMessage('');
+        setPhoto(null); // let them retake
+        return;
       }
 
-      const { year, month } = getYearMonth();
-      const response = await checkInWithFace(
-        {
+      // Face matched — mark attendance
+      setStatusMessage(mode === 'checkin' ? 'Marking check-in...' : 'Marking check-out...');
+
+      let locationStr = 'Unknown';
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
+      } catch {}
+
+      if (mode === 'checkin') {
+        const { year, month } = getYearMonth();
+        await checkIn({
           empid: user.id,
           projectId,
           date: getTodayDate(),
@@ -124,42 +80,34 @@ export default function CameraScreen({ navigation }) {
           location: locationStr,
           year,
           month,
-        },
-        photo,
-      );
-
-      const jobId = response?.data?.jobId;
-      if (jobId) {
-        // Face verification running in background — poll until done
-        startPolling(jobId);
+        });
       } else {
-        // No face image was used — direct check-in succeeded
-        navigation.replace('Home');
+        await checkOut({
+          empid: user.id,
+          date: getTodayDate(),
+          endTime: getCurrentTime(),
+        });
       }
+
+      navigation.replace('Home');
     } catch (err) {
-      setSubmitting(false);
-      setVerifyMessage('');
       const msg =
         err?.response?.data?.detail ||
         err?.response?.data?.message ||
-        'Could not submit check-in. Please try again.';
-      Alert.alert('Check In Failed', msg);
+        'Something went wrong. Please try again.';
+      Alert.alert(mode === 'checkin' ? 'Check In Failed' : 'Check Out Failed', msg);
+      setSubmitting(false);
+      setStatusMessage('');
     }
   };
 
-  // ── Permission not yet determined ──
-  if (!camPermission) {
-    return <View style={styles.dark} />;
-  }
+  if (!camPermission) return <View style={styles.dark} />;
 
-  // ── Permission denied ──
   if (!camPermission.granted) {
     return (
       <SafeAreaView style={[styles.dark, styles.center]}>
         <Text style={styles.permTitle}>Camera Access Required</Text>
-        <Text style={styles.permBody}>
-          Your selfie is needed to confirm your identity at check-in.
-        </Text>
+        <Text style={styles.permBody}>Your photo is needed to verify your identity.</Text>
         <TouchableOpacity style={styles.primaryBtn} onPress={requestCamPermission}>
           <Text style={styles.primaryBtnText}>Grant Camera Access</Text>
         </TouchableOpacity>
@@ -170,44 +118,31 @@ export default function CameraScreen({ navigation }) {
     );
   }
 
-  // ── Photo preview ──
   if (photo) {
     return (
       <View style={styles.dark}>
         <Image source={{ uri: photo }} style={styles.previewImg} resizeMode="cover" />
         <SafeAreaView edges={['bottom']} style={styles.previewFooter}>
-          <Text style={styles.previewTitle}>Use this photo?</Text>
-          <Text style={styles.previewSub}>
-            Your location will be captured automatically on submit.
+          <Text style={styles.previewTitle}>
+            {mode === 'checkin' ? 'Check In Photo' : 'Check Out Photo'}
           </Text>
+          <Text style={styles.previewSub}>
+            Your face will be matched against your registered photo.
+          </Text>
+
           {submitting ? (
             <View style={styles.verifyingBox}>
               <ActivityIndicator color="#4F8EF7" size="large" />
-              <Text style={styles.verifyingText}>{verifyMessage}</Text>
-              <TouchableOpacity
-                style={styles.ghostBtn}
-                onPress={() => {
-                  stopPolling();
-                  setSubmitting(false);
-                  setVerifyMessage('');
-                }}
-              >
-                <Text style={styles.ghostBtnText}>Cancel</Text>
-              </TouchableOpacity>
+              <Text style={styles.verifyingText}>{statusMessage}</Text>
             </View>
           ) : (
             <>
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={handleSubmit}
-                activeOpacity={0.87}
-              >
-                <Text style={styles.primaryBtnText}>Submit & Check In</Text>
+              <TouchableOpacity style={styles.primaryBtn} onPress={handleSubmit} activeOpacity={0.87}>
+                <Text style={styles.primaryBtnText}>
+                  {mode === 'checkin' ? 'Verify & Check In' : 'Verify & Check Out'}
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.ghostBtn}
-                onPress={() => setPhoto(null)}
-              >
+              <TouchableOpacity style={styles.ghostBtn} onPress={() => setPhoto(null)}>
                 <Text style={styles.ghostBtnText}>Retake</Text>
               </TouchableOpacity>
             </>
@@ -217,26 +152,24 @@ export default function CameraScreen({ navigation }) {
     );
   }
 
-  // ── Live camera ──
   return (
     <View style={styles.dark}>
       <CameraView ref={cameraRef} style={styles.camera} facing="front">
-        {/* Top bar */}
         <SafeAreaView edges={['top']} style={styles.topBar}>
           <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()}>
             <Text style={styles.closeIcon}>✕</Text>
           </TouchableOpacity>
-          <Text style={styles.cameraTitle}>Attendance Selfie</Text>
+          <Text style={styles.cameraTitle}>
+            {mode === 'checkin' ? 'Check In — Take Selfie' : 'Check Out — Take Selfie'}
+          </Text>
           <View style={{ width: 40 }} />
         </SafeAreaView>
 
-        {/* Face guide oval */}
         <View style={styles.ovalWrap} pointerEvents="none">
           <View style={styles.ovalGuide} />
           <Text style={styles.ovalHint}>Centre your face</Text>
         </View>
 
-        {/* Capture button */}
         <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
           <TouchableOpacity style={styles.captureRing} onPress={takePicture} activeOpacity={0.8}>
             <View style={styles.captureDisk} />
@@ -252,11 +185,9 @@ const styles = StyleSheet.create({
   center: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
   camera: { flex: 1 },
 
-  // Permission screen
   permTitle: { fontSize: 20, fontWeight: '700', color: '#EDF2F7', marginBottom: 10, textAlign: 'center' },
   permBody: { fontSize: 14, color: '#4A6080', textAlign: 'center', marginBottom: 32, lineHeight: 22 },
 
-  // Buttons
   primaryBtn: {
     backgroundColor: '#4F8EF7', borderRadius: 14,
     paddingVertical: 16, paddingHorizontal: 40,
@@ -265,9 +196,7 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   ghostBtn: { paddingVertical: 12, alignItems: 'center', width: '100%', marginTop: 4 },
   ghostBtnText: { color: '#4A6080', fontSize: 15 },
-  disabled: { opacity: 0.5 },
 
-  // Camera overlays
   topBar: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8,
@@ -277,17 +206,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center',
   },
   closeIcon: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  cameraTitle: { color: 'rgba(255,255,255,0.9)', fontSize: 15, fontWeight: '600' },
+  cameraTitle: { color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'center' },
 
   ovalWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   ovalGuide: {
     width: 210, height: 280, borderRadius: 105,
     borderWidth: 2, borderColor: 'rgba(79,142,247,0.75)',
   },
-  ovalHint: {
-    color: 'rgba(255,255,255,0.5)', fontSize: 13,
-    marginTop: 14, fontWeight: '500',
-  },
+  ovalHint: { color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 14, fontWeight: '500' },
 
   bottomBar: { alignItems: 'center', paddingBottom: 24 },
   captureRing: {
@@ -298,7 +224,6 @@ const styles = StyleSheet.create({
   },
   captureDisk: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#fff' },
 
-  // Preview
   previewImg: { flex: 1 },
   previewFooter: {
     backgroundColor: '#0B1120', paddingHorizontal: 28,
@@ -307,7 +232,6 @@ const styles = StyleSheet.create({
   previewTitle: { fontSize: 18, fontWeight: '700', color: '#EDF2F7' },
   previewSub: { fontSize: 13, color: '#4A6080', textAlign: 'center', marginBottom: 6 },
 
-  // Verifying state
-  verifyingBox: { alignItems: 'center', paddingVertical: 12, width: '100%', gap: 12 },
+  verifyingBox: { alignItems: 'center', paddingVertical: 12, width: '100%', gap: 10 },
   verifyingText: { fontSize: 14, color: '#4A6080', textAlign: 'center' },
 });
