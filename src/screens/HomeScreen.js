@@ -5,8 +5,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
-import { getAttendanceStatus, checkOut } from '../api/attendance';
+import { getAttendanceStatus, checkIn, checkOut } from '../api/attendance';
 import { getTodayDate, getCurrentTime, getYearMonth, formatDisplayDate } from '../utils/dateTime';
 import { colors } from '../theme';
 
@@ -25,6 +27,7 @@ export default function HomeScreen({ navigation }) {
   const [pageLoading, setPageLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [clock, setClock] = useState(getCurrentTime());
+  const [checkingIn, setCheckingIn] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
 
   useEffect(() => {
@@ -78,19 +81,65 @@ export default function HomeScreen({ navigation }) {
     setRefreshing(false);
   };
 
-  const handleCheckIn = () => {
+  const handleCheckIn = async () => {
     if (!projectId) {
       Alert.alert(
         'No Project Assigned',
         'Could not detect your project. Please contact your admin or try refreshing.',
-        [
-          { text: 'Retry', onPress: resolveProject },
-          { text: 'Cancel', style: 'cancel' },
-        ]
+        [{ text: 'Retry', onPress: resolveProject }, { text: 'Cancel', style: 'cancel' }],
       );
       return;
     }
-    navigation.navigate('Camera');
+
+    // Biometric identity verification (Face ID / fingerprint)
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (hasHardware && isEnrolled) {
+        const auth = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Verify your identity to check in',
+          cancelLabel: 'Cancel',
+          disableDeviceFallback: false,
+        });
+        if (!auth.success) {
+          Alert.alert('Verification Failed', 'Identity not confirmed. Check-in cancelled.');
+          return;
+        }
+      }
+    } catch {
+      // Biometrics unavailable — proceed without it
+    }
+
+    // Get GPS location
+    setCheckingIn(true);
+    let locationStr = 'Unknown';
+    try {
+      await Location.requestForegroundPermissionsAsync();
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
+    } catch {}
+
+    // Mark attendance
+    try {
+      const { year, month } = getYearMonth();
+      await checkIn({
+        empid: user.id,
+        projectId,
+        date: getTodayDate(),
+        startTime: getCurrentTime(),
+        location: locationStr,
+        year,
+        month,
+      });
+      await fetchStatus();
+    } catch (err) {
+      Alert.alert(
+        'Check In Failed',
+        err?.response?.data?.detail || err?.response?.data?.message || 'Please try again.',
+      );
+    } finally {
+      setCheckingIn(false);
+    }
   };
 
   const handleCheckOut = () => {
@@ -156,9 +205,20 @@ export default function HomeScreen({ navigation }) {
         {/* Action */}
         <View style={styles.actionWrap}>
           {(status === 'A' || status === null) && (
-            <TouchableOpacity style={styles.checkInBtn} onPress={handleCheckIn} activeOpacity={0.88}>
-              <Text style={styles.actionLabel}>Check In</Text>
-              <Text style={styles.actionHint}>Opens camera for attendance photo</Text>
+            <TouchableOpacity
+              style={[styles.checkInBtn, checkingIn && styles.disabled]}
+              onPress={handleCheckIn}
+              disabled={checkingIn}
+              activeOpacity={0.88}
+            >
+              {checkingIn ? (
+                <ActivityIndicator color={colors.accentText} size="large" />
+              ) : (
+                <>
+                  <Text style={styles.actionLabel}>Check In</Text>
+                  <Text style={styles.actionHint}>Uses Face ID / fingerprint to verify</Text>
+                </>
+              )}
             </TouchableOpacity>
           )}
 
@@ -240,6 +300,7 @@ const styles = StyleSheet.create({
   },
   actionLabel: { color: colors.accentText, fontSize: 22, fontWeight: '800' },
   actionHint: { color: 'rgba(31,31,31,0.55)', fontSize: 13, marginTop: 5 },
+  disabled: { opacity: 0.6 },
 
   infoCard: {
     backgroundColor: colors.card, borderRadius: 18, paddingVertical: 28,
