@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Image, Alert,
+  ActivityIndicator, Image, Alert, BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Location from 'expo-location';
@@ -12,18 +13,33 @@ import { checkIn, checkOut } from '../api/attendance';
 import { useAuth } from '../context/AuthContext';
 import { getTodayDate, getCurrentTime, getYearMonth } from '../utils/dateTime';
 
+const SUBMIT_TIMEOUT_MS = 30_000;
+
 export default function CameraScreen({ navigation, route }) {
-  const mode = route?.params?.mode ?? 'checkin'; // 'checkin' | 'checkout'
+  const mode = route?.params?.mode ?? 'checkin';
   const { user, projectId } = useAuth();
   const [camPermission, requestCamPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const cameraRef = useRef(null);
+  const timeoutRef = useRef(null);
 
   useEffect(() => {
     Location.requestForegroundPermissionsAsync();
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, []);
+
+  // Block Android hardware back button while a submission is in flight so the
+  // user cannot accidentally navigate away mid-request (which would leave
+  // attendance marked but the UI stuck on the old screen).
+  useFocusEffect(
+    useCallback(() => {
+      const onBack = () => submitting;
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, [submitting]),
+  );
 
   const takePicture = async () => {
     if (!cameraRef.current) return;
@@ -36,37 +52,58 @@ export default function CameraScreen({ navigation, route }) {
   };
 
   const handleSubmit = async () => {
+    if (submitting) return;
     setSubmitting(true);
-    setStatusMessage('Verifying your identity...');
+
+    // Hard 30-second UI timeout — resets the screen and tells the user to retry.
+    let timedOut = false;
+    timeoutRef.current = setTimeout(() => {
+      timedOut = true;
+      setSubmitting(false);
+      setStatusMessage('');
+      setPhoto(null);
+      Alert.alert(
+        'Taking Too Long',
+        'The request timed out after 30 s. Please check your internet connection and try again.',
+      );
+    }, SUBMIT_TIMEOUT_MS);
+
+    const clearTimer = () => {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    };
 
     try {
-      // Resize selfie before upload to reduce transfer size
+      // Step 1 — compress
+      setStatusMessage('Step 1/4  Compressing photo...');
       const compressed = await ImageManipulator.manipulateAsync(
         photo,
         [{ resize: { width: 640 } }],
         { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
       );
+      if (timedOut) return;
 
-      // Face comparison against registration photo (server uses OpenCV, ~200ms)
+      // Step 2 — face compare (server-side PIL histogram, ~1-2 s incl. network)
+      setStatusMessage('Step 2/4  Verifying your face...');
       const { data: faceResult } = await compareFace(user.id, compressed.uri);
+      if (timedOut) return;
 
       if (!faceResult.match) {
+        clearTimer();
         Alert.alert(
           'Face Not Recognized',
           faceResult.message || 'Your face did not match. Please try again in better lighting.',
         );
         setSubmitting(false);
         setStatusMessage('');
-        setPhoto(null); // let them retake
+        setPhoto(null);
         return;
       }
 
-      // Face matched — mark attendance
-      setStatusMessage(mode === 'checkin' ? 'Marking check-in...' : 'Marking check-out...');
-
+      // Step 3 — location (instant with cached GPS, max 5 s fallback)
+      setStatusMessage('Step 3/4  Getting location...');
       let locationStr = 'Unknown';
       try {
-        // Prefer last-known position (instant). Only fall back to live GPS with a 5s cap.
         const cached = await Location.getLastKnownPositionAsync({ maxAge: 5 * 60 * 1000 });
         if (cached) {
           locationStr = `${cached.coords.latitude.toFixed(6)},${cached.coords.longitude.toFixed(6)}`;
@@ -78,7 +115,10 @@ export default function CameraScreen({ navigation, route }) {
           locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
         }
       } catch {}
+      if (timedOut) return;
 
+      // Step 4 — record attendance
+      setStatusMessage(mode === 'checkin' ? 'Step 4/4  Recording check-in...' : 'Step 4/4  Recording check-out...');
       if (mode === 'checkin') {
         const { year, month } = getYearMonth();
         await checkIn({
@@ -97,15 +137,19 @@ export default function CameraScreen({ navigation, route }) {
           endTime: getCurrentTime(),
         });
       }
+      if (timedOut) return;
 
+      clearTimer();
       navigation.replace('Home');
     } catch (err) {
+      if (timedOut) return;
+      clearTimer();
       const msg =
         err?.response?.data?.detail ||
         err?.response?.data?.message ||
         err?.message ||
         'Something went wrong. Please try again.';
-      console.log('Check-in error:', JSON.stringify(err?.response?.data), err?.message);
+      console.log('Submit error:', JSON.stringify(err?.response?.data), err?.message);
       Alert.alert(mode === 'checkin' ? 'Check In Failed' : 'Check Out Failed', msg);
       setSubmitting(false);
       setStatusMessage('');
@@ -145,6 +189,7 @@ export default function CameraScreen({ navigation, route }) {
             <View style={styles.verifyingBox}>
               <ActivityIndicator color="#4F8EF7" size="large" />
               <Text style={styles.verifyingText}>{statusMessage}</Text>
+              <Text style={styles.verifyingHint}>Please wait — do not press back</Text>
             </View>
           ) : (
             <>
@@ -244,5 +289,6 @@ const styles = StyleSheet.create({
   previewSub: { fontSize: 13, color: '#4A6080', textAlign: 'center', marginBottom: 6 },
 
   verifyingBox: { alignItems: 'center', paddingVertical: 12, width: '100%', gap: 10 },
-  verifyingText: { fontSize: 14, color: '#4A6080', textAlign: 'center' },
+  verifyingText: { fontSize: 15, color: '#EDF2F7', textAlign: 'center', fontWeight: '600' },
+  verifyingHint: { fontSize: 12, color: '#4A6080', textAlign: 'center' },
 });
