@@ -4,7 +4,7 @@ export const getAttendanceStatus = (empid, date) =>
   client.post('/attendance/getAttendanceStatus', { empid, date });
 
 export const checkIn = (payload) =>
-  client.post('/attendance/add', payload);
+  client.post('/attendance/checkin', payload);
 
 
 export const checkOut = (payload) =>
