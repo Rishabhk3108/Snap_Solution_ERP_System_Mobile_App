@@ -66,8 +66,17 @@ export default function CameraScreen({ navigation, route }) {
 
       let locationStr = 'Unknown';
       try {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
+        // Prefer last-known position (instant). Only fall back to live GPS with a 5s cap.
+        const cached = await Location.getLastKnownPositionAsync({ maxAge: 5 * 60 * 1000 });
+        if (cached) {
+          locationStr = `${cached.coords.latitude.toFixed(6)},${cached.coords.longitude.toFixed(6)}`;
+        } else {
+          const loc = await Promise.race([
+            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Lowest }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('loc_timeout')), 5000)),
+          ]);
+          locationStr = `${loc.coords.latitude.toFixed(6)},${loc.coords.longitude.toFixed(6)}`;
+        }
       } catch {}
 
       if (mode === 'checkin') {
@@ -94,7 +103,9 @@ export default function CameraScreen({ navigation, route }) {
       const msg =
         err?.response?.data?.detail ||
         err?.response?.data?.message ||
+        err?.message ||
         'Something went wrong. Please try again.';
+      console.log('Check-in error:', JSON.stringify(err?.response?.data), err?.message);
       Alert.alert(mode === 'checkin' ? 'Check In Failed' : 'Check Out Failed', msg);
       setSubmitting(false);
       setStatusMessage('');
