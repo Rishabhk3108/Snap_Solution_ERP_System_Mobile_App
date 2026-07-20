@@ -8,7 +8,7 @@ export const checkIn = (payload) =>
 
 
 export const checkOut = (payload) =>
-  client.put('/attendance/update', payload);
+  client.post('/attendance/checkout', payload);
 
 export const getAttendanceList = (empid, year, month) =>
   client.get(`/attendance/list/${empid}/${year}/${month}`);
