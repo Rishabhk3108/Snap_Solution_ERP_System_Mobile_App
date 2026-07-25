@@ -14,6 +14,6 @@ export const compareFace = (empid, photoUri) => {
   });
   return client.post('/face/compare', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 15000,
+    timeout: 25000,
   });
 };

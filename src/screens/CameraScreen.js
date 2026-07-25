@@ -140,7 +140,7 @@ export default function CameraScreen({ navigation, route }) {
       if (timedOut) return;
 
       clearTimer();
-      navigation.replace('Home');
+      navigation.replace('Tabs', { screen: 'Home' });
     } catch (err) {
       if (timedOut) return;
       clearTimer();
