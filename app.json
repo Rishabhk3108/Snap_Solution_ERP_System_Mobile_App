@@ -35,8 +35,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "361366fd-bf1e-4ec6-a3b8-9917042794ba"
+        "projectId": "ae7ec40d-f0df-45ea-b4ce-d0ebc2dd6ea2"
       }
-    }
+    },
+    "owner": "snapapp123"
   }
 }
