@@ -11,6 +11,7 @@ import LoginScreen from '../screens/LoginScreen';
 import HomeScreen from '../screens/HomeScreen';
 import CameraScreen from '../screens/CameraScreen';
 import AttendanceHistoryScreen from '../screens/AttendanceHistoryScreen';
+import TeamAttendanceScreen from '../screens/TeamAttendanceScreen';
 import LeaveScreen from '../screens/LeaveScreen';
 import SalaryScreen from '../screens/SalaryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -20,6 +21,9 @@ const RootStack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
 function MainTabs() {
+  const { user } = useAuth();
+  const isManager = user?.role === 'ROLE_MANAGER' || user?.role === 'ROLE_ADMIN';
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -38,6 +42,7 @@ function MainTabs() {
         tabBarIcon: ({ focused, color, size }) => {
           const icons = {
             Home: focused ? 'home' : 'home-outline',
+            MyTeam: focused ? 'people' : 'people-outline',
             Attendance: focused ? 'calendar' : 'calendar-outline',
             Leave: focused ? 'document-text' : 'document-text-outline',
             Salary: focused ? 'cash' : 'cash-outline',
@@ -48,6 +53,9 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarLabel: 'Home' }} />
+      {isManager && (
+        <Tab.Screen name="MyTeam" component={TeamAttendanceScreen} options={{ tabBarLabel: 'My Team' }} />
+      )}
       <Tab.Screen name="Attendance" component={AttendanceHistoryScreen} options={{ tabBarLabel: 'Attendance' }} />
       <Tab.Screen name="Leave" component={LeaveScreen} options={{ tabBarLabel: 'Leave' }} />
       <Tab.Screen name="Salary" component={SalaryScreen} options={{ tabBarLabel: 'Salary' }} />

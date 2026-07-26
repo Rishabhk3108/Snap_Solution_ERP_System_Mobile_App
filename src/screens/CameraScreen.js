@@ -18,7 +18,17 @@ const SUBMIT_TIMEOUT_MS = 30_000;
 export default function CameraScreen({ navigation, route }) {
   const mode = route?.params?.mode ?? 'checkin';
   const { user, projectId } = useAuth();
+  const proxy = !!route?.params?.proxy;
+  // Proxy mode: a manager stepping through one or more team members' check-in/out.
+  // Self mode: the logged-in employee's own check-in/out, wrapped in the same one-item shape.
+  const queue = proxy
+    ? route?.params?.queue ?? []
+    : [{ empid: user.id, name: user.fullname, projectId }];
+  const [queueIndex, setQueueIndex] = useState(0);
+  const target = queue[queueIndex];
+
   const [camPermission, requestCamPermission] = useCameraPermissions();
+  const [facing, setFacing] = useState(proxy ? 'back' : 'front');
   const [photo, setPhoto] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -84,15 +94,17 @@ export default function CameraScreen({ navigation, route }) {
       if (timedOut) return;
 
       // Step 2 — face compare (server-side PIL histogram, ~1-2 s incl. network)
-      setStatusMessage('Step 2/4  Verifying your face...');
-      const { data: faceResult } = await compareFace(user.id, compressed.uri);
+      setStatusMessage(proxy ? `Step 2/4  Verifying ${target.name}'s face...` : 'Step 2/4  Verifying your face...');
+      const { data: faceResult } = await compareFace(target.empid, compressed.uri);
       if (timedOut) return;
 
       if (!faceResult.match) {
         clearTimer();
         Alert.alert(
           'Face Not Recognized',
-          faceResult.message || 'Your face did not match. Please try again in better lighting.',
+          faceResult.message || (proxy
+            ? `${target.name}'s face did not match. Please try again in better lighting.`
+            : 'Your face did not match. Please try again in better lighting.'),
         );
         setSubmitting(false);
         setStatusMessage('');
@@ -122,8 +134,8 @@ export default function CameraScreen({ navigation, route }) {
       if (mode === 'checkin') {
         const { year, month } = getYearMonth();
         await checkIn({
-          empid: user.id,
-          projectId,
+          empid: target.empid,
+          projectId: target.projectId,
           date: getTodayDate(),
           startTime: getCurrentTime(),
           location: locationStr,
@@ -132,7 +144,7 @@ export default function CameraScreen({ navigation, route }) {
         });
       } else {
         await checkOut({
-          empid: user.id,
+          empid: target.empid,
           date: getTodayDate(),
           endTime: getCurrentTime(),
         });
@@ -140,7 +152,18 @@ export default function CameraScreen({ navigation, route }) {
       if (timedOut) return;
 
       clearTimer();
-      navigation.replace('Tabs', { screen: 'Home' });
+
+      if (proxy && queueIndex + 1 < queue.length) {
+        // More team members queued — reset the capture UI and move to the next one.
+        setQueueIndex((i) => i + 1);
+        setSubmitting(false);
+        setStatusMessage('');
+        setPhoto(null);
+      } else if (proxy) {
+        navigation.goBack();
+      } else {
+        navigation.replace('Tabs', { screen: 'Home' });
+      }
     } catch (err) {
       if (timedOut) return;
       clearTimer();
@@ -155,6 +178,18 @@ export default function CameraScreen({ navigation, route }) {
       setStatusMessage('');
     }
   };
+
+  if (proxy && queue.length === 0) {
+    return (
+      <SafeAreaView style={[styles.dark, styles.center]}>
+        <Text style={styles.permTitle}>No One Selected</Text>
+        <Text style={styles.permBody}>Select at least one team member before continuing.</Text>
+        <TouchableOpacity style={styles.ghostBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.ghostBtnText}>Go Back</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
 
   if (!camPermission) return <View style={styles.dark} />;
 
@@ -179,10 +214,14 @@ export default function CameraScreen({ navigation, route }) {
         <Image source={{ uri: photo }} style={styles.previewImg} resizeMode="cover" />
         <SafeAreaView edges={['bottom']} style={styles.previewFooter}>
           <Text style={styles.previewTitle}>
-            {mode === 'checkin' ? 'Check In Photo' : 'Check Out Photo'}
+            {proxy
+              ? `${mode === 'checkin' ? 'Check In' : 'Check Out'} — ${target.name}`
+              : (mode === 'checkin' ? 'Check In Photo' : 'Check Out Photo')}
           </Text>
           <Text style={styles.previewSub}>
-            Your face will be matched against your registered photo.
+            {proxy
+              ? `This photo will be matched against ${target.name}'s registered face.`
+              : 'Your face will be matched against your registered photo.'}
           </Text>
 
           {submitting ? (
@@ -210,20 +249,38 @@ export default function CameraScreen({ navigation, route }) {
 
   return (
     <View style={styles.dark}>
-      <CameraView ref={cameraRef} style={styles.camera} facing="front">
+      <CameraView ref={cameraRef} style={styles.camera} facing={facing}>
         <SafeAreaView edges={['top']} style={styles.topBar}>
           <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()}>
             <Text style={styles.closeIcon}>✕</Text>
           </TouchableOpacity>
-          <Text style={styles.cameraTitle}>
-            {mode === 'checkin' ? 'Check In — Take Selfie' : 'Check Out — Take Selfie'}
-          </Text>
-          <View style={{ width: 40 }} />
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={styles.cameraTitle}>
+              {proxy
+                ? `${mode === 'checkin' ? 'Check In' : 'Check Out'} — ${target.name}`
+                : (mode === 'checkin' ? 'Check In — Take Selfie' : 'Check Out — Take Selfie')}
+            </Text>
+            {proxy && queue.length > 1 && (
+              <Text style={styles.cameraProgress}>{queueIndex + 1} of {queue.length}</Text>
+            )}
+          </View>
+          {proxy ? (
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => setFacing((f) => (f === 'back' ? 'front' : 'back'))}
+            >
+              <Text style={styles.closeIcon}>⟲</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
         </SafeAreaView>
 
         <View style={styles.ovalWrap} pointerEvents="none">
           <View style={styles.ovalGuide} />
-          <Text style={styles.ovalHint}>Centre your face</Text>
+          <Text style={styles.ovalHint}>
+            {proxy ? `Centre ${target.name.split(' ')[0]}'s face` : 'Centre your face'}
+          </Text>
         </View>
 
         <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
@@ -262,7 +319,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center',
   },
   closeIcon: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  cameraTitle: { color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'center' },
+  cameraTitle: { color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  cameraProgress: { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 2 },
 
   ovalWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   ovalGuide: {
