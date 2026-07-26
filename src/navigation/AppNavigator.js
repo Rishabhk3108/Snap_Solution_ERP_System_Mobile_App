@@ -12,6 +12,7 @@ import HomeScreen from '../screens/HomeScreen';
 import CameraScreen from '../screens/CameraScreen';
 import AttendanceHistoryScreen from '../screens/AttendanceHistoryScreen';
 import TeamAttendanceScreen from '../screens/TeamAttendanceScreen';
+import TeamMembersScreen from '../screens/TeamMembersScreen';
 import LeaveScreen from '../screens/LeaveScreen';
 import SalaryScreen from '../screens/SalaryScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -82,6 +83,7 @@ export default function AppNavigator() {
           user.onboarding_complete ? (
             <>
               <RootStack.Screen name="Tabs" component={MainTabs} />
+              <RootStack.Screen name="TeamMembers" component={TeamMembersScreen} />
               <RootStack.Screen
                 name="Camera"
                 component={CameraScreen}
