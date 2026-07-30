@@ -131,14 +131,16 @@ export default function HomeScreen({ navigation }) {
           {(status === 'A' || status === null) && (
             <TouchableOpacity style={styles.checkInBtn} onPress={handleCheckIn} activeOpacity={0.88}>
               <Text style={styles.actionLabel}>Check In</Text>
-              <Text style={styles.actionHint}>Take a selfie to verify & check in</Text>
+              {/* was: "Take a selfie to verify & check in" — face verification temporarily disabled */}
+              <Text style={styles.actionHint}>Confirm your location to check in</Text>
             </TouchableOpacity>
           )}
 
           {status === 'NC' && (
             <TouchableOpacity style={styles.checkOutBtn} onPress={handleCheckOut} activeOpacity={0.88}>
               <Text style={[styles.actionLabel, { color: '#fff' }]}>Check Out</Text>
-              <Text style={[styles.actionHint, { color: 'rgba(255,255,255,0.7)' }]}>Take a selfie to verify & check out</Text>
+              {/* was: "Take a selfie to verify & check out" — face verification temporarily disabled */}
+              <Text style={[styles.actionHint, { color: 'rgba(255,255,255,0.7)' }]}>Confirm your location to check out</Text>
             </TouchableOpacity>
           )}
 

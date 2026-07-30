@@ -11,16 +11,19 @@ import { colors } from '../../theme';
 const GENDERS = ['Male', 'Female', 'Other'];
 
 function StepIndicator({ current }) {
+  // Face enrollment steps (2, 3) are temporarily disabled — indicator shows a single step for now.
+  // Restore to [1, 2, 3] when face enrollment is re-enabled.
   return (
     <View style={ind.row}>
-      {[1, 2, 3].map((n) => (
+      {[1].map((n) => (
         <React.Fragment key={n}>
           <View style={[ind.dot, n === current && ind.dotActive, n < current && ind.dotDone]}>
             {n < current
               ? <Text style={ind.checkmark}>✓</Text>
               : <Text style={[ind.dotText, n === current && ind.dotTextActive]}>{n}</Text>}
           </View>
-          {n < 3 && <View style={[ind.line, n < current && ind.lineDone]} />}
+          {/* was `n < 3` before face enrollment steps were disabled — no further steps to link to now */}
+          {n < 1 && <View style={[ind.line, n < current && ind.lineDone]} />}
         </React.Fragment>
       ))}
     </View>
@@ -80,7 +83,8 @@ export default function PersonalDetailsScreen({ navigation }) {
         nomineeName: nomineeName.trim(),
         nomineeRelationship: nomineeRelationship.trim(),
       });
-      navigation.navigate('OB_FaceEnroll');
+      // navigation.navigate('OB_FaceEnroll'); // face enrollment temporarily disabled
+      navigation.navigate('OB_Success');
     } catch (err) {
       Alert.alert('Error', err.response?.data?.detail || 'Failed to save details. Please try again.');
     } finally {

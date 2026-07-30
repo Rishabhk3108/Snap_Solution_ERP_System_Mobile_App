@@ -5,7 +5,9 @@ import { useAuth } from '../../context/AuthContext';
 import { getPersonalInfo } from '../../api/onboarding';
 import { colors } from '../../theme';
 
-const STEPS = ['Personal Details', 'Face Enrolment', 'Face Test'];
+// Face enrollment/test steps are temporarily disabled — restore the line below when re-enabling.
+// const STEPS = ['Personal Details', 'Face Enrolment', 'Face Test'];
+const STEPS = ['Personal Details'];
 
 export default function WelcomeScreen({ navigation }) {
   const { user } = useAuth();
@@ -26,7 +28,7 @@ export default function WelcomeScreen({ navigation }) {
         {/* Greeting */}
         <Text style={styles.heading}>Welcome, {firstName}!</Text>
         <Text style={styles.sub}>
-          Your account has been approved. Complete a quick 3-step setup before
+          Your account has been approved. Complete a quick setup before
           you can access Snap Solutions.
         </Text>
 
@@ -64,7 +66,8 @@ export default function WelcomeScreen({ navigation }) {
               const { data } = await getPersonalInfo(user.id);
               // If admin already filled mobile, skip personal details step
               if (data?.mobile) {
-                navigation.navigate('OB_FaceEnroll');
+                // navigation.navigate('OB_FaceEnroll'); // face enrollment temporarily disabled
+                navigation.navigate('OB_Success');
               } else {
                 navigation.navigate('OB_PersonalDetails');
               }
